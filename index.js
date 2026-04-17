@@ -81,6 +81,7 @@ const initApp = async () => {
   const buildFileExists = fs.existsSync(buildJsonPath);
 
   // Set required app infos
+  APP.start = new Date();
   APP.name = app.getName();
   APP.title = packageJson.title;
   APP.version = app.getVersion();
@@ -190,17 +191,25 @@ const initArgs = async () => {
     return app.exit(1);
   }
 
-  // Split url arguments
+  // Split arguments parameter
   args.web_url = args.web_url || [];
   if (!Array.isArray(args.web_url)) {
     args.web_url = args.web_url.split(",").map((url) => url.trim());
+  }
+  args.app_disable = args.app_disable || [];
+  if (!Array.isArray(args.app_disable)) {
+    args.app_disable = args.app_disable.split(",").map((disable) => disable.trim());
+  }
+  args.app_reset = args.app_reset || [];
+  if (!Array.isArray(args.app_reset)) {
+    args.app_reset = args.app_reset.split(",").map((reset) => reset.trim());
   }
 
   // Calculate arguments hash
   const argsFileHash = crypto.createHash("sha256").update(JSON.stringify(args)).digest("hex");
   const argsUpdated = argsFileHashExists && argsFileHash !== fs.readFileSync(argsFileHashPath, "utf8");
-  if (argsUpdated && !("app_reset" in args)) {
-    args.app_reset = "arguments";
+  if (argsUpdated && !args.app_reset.includes("arguments")) {
+    args.app_reset.push("arguments");
   }
   if (fs.existsSync(APP.cache)) {
     fs.writeFileSync(argsFileHashPath, argsFileHash);
@@ -240,14 +249,7 @@ const initLog = async () => {
     onError({ error, versions }) {
       if (!error?.message?.includes("Object has been destroyed")) {
         const build = { ...APP.build, ...versions };
-        const whoopsie = "💥 Whoopsie!";
-        const section2 = `# Description\n- Hardware information?\n- How to reproduce?\n- Additional logs?\n`;
-        const section3 = `# Error\n\`\`\`bash\n${new Date().toISOString()}: ${error.stack}\n\`\`\`\n`;
-        const section4 = `# Application\n\`\`\`json\n${JSON.stringify(build, null, 2)}\n\`\`\`\n`;
-        const title = encodeURIComponent(`${whoopsie} - ${error}`);
-        const body = encodeURIComponent(`${section2}\n${section3}\n${section4}`);
-        console.error(`${whoopsie} -`, error, build);
-        console.info(`🪲 Report issue --> ${APP.issues}/new?title=${title}&body=${body}`);
+        console.error(`💥 Whoopsie! -`, error, build);
       }
       app.quit();
     },

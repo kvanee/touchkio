@@ -50,7 +50,7 @@ const init = async () => {
 
   // Clear cache and storage
   await session.defaultSession.clearCache();
-  if (ARGS.app_reset === "storage") {
+  if (ARGS.app_reset.includes("storage")) {
     await session.defaultSession.clearStorageData();
   }
 
@@ -1088,7 +1088,7 @@ const viewEvents = async () => {
     // Update webview layout
     view.webContents.once("dom-ready", () => {
       console.debug(`webview.js: viewEvents(${i},dom-ready)`);
-      if ("app_reset" in ARGS) {
+      if (ARGS.app_reset.length > 0) {
         cookieStore("web-theme", WEBVIEW.theme.default, view);
         cookieStore("web-zoom", WEBVIEW.zoom.default, view);
       }
@@ -1179,7 +1179,7 @@ const viewEvents = async () => {
 
                 // Turn display on if it was off
                 hardware.setDisplayStatus("ON");
-                WEBVIEW.tracker.display.on = new Date();
+                WEBVIEW.tracker.display.on = now;
               }
               break;
             case "back":
@@ -1276,6 +1276,9 @@ const appEvents = async () => {
  * Fetches the latest app release infos from github.
  */
 const latestRelease = async () => {
+  if (ARGS.app_disable.includes("mqtt_app")) {
+    return;
+  }
   try {
     const response = await axios.get(APP.releases.url, { timeout: 20000 });
     const release = response?.data?.find((item) => {
@@ -1377,11 +1380,25 @@ const cookieStore = async (key, value, view = WEBVIEW.views[WEBVIEW.viewActive])
  * @returns {Promise<string|null>} The base64 image of the captured page or null if failed.
  */
 const captureView = async (wait, view = WEBVIEW.views[WEBVIEW.viewActive]) => {
-  await new Promise((r) => setTimeout(r, wait));
-  const image = await view.webContents.capturePage();
-  const dataUrl = image.toDataURL();
-  const dataString = dataUrl.replace(/^data:image\/\w+;base64,/, "").trim();
-  WEBVIEW.tracker.screenshot = dataString || WEBVIEW.tracker.screenshot;
+  if (ARGS.app_disable.includes("mqtt_screenshot")) {
+    return null;
+  }
+  try {
+    await new Promise((r) => setTimeout(r, wait));
+    const image = await view.webContents.capturePage();
+    const max = 800;
+    const size = image.getSize();
+    const scale = Math.min(max / size.width, max / size.height, 1);
+    const resized = image.resize({
+      width: Math.max(1, Math.floor(size.width * scale)),
+      height: Math.max(1, Math.floor(size.height * scale)),
+    });
+    const dataUrl = resized.toDataURL();
+    const dataString = dataUrl.replace(/^data:image\/\w+;base64,/, "").trim();
+    WEBVIEW.tracker.screenshot = dataString || WEBVIEW.tracker.screenshot;
+  } catch (error) {
+    console.warn("Screenshot Error:", error.message);
+  }
   return WEBVIEW.tracker.screenshot;
 };
 
