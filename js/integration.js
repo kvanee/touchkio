@@ -90,6 +90,12 @@ const init = async () => {
       initProcessorTemperature();
       initBatteryLevel();
       initPackageUpgrades();
+      initOsUpdate();
+      initLvaUpdate();
+      initAudioInput();
+      initAudioOutput();
+      initDisplayPower();
+      initDisplayRotation();
       initLastActive();
 
       // Init client diagnostic
@@ -158,6 +164,8 @@ const init = async () => {
       return;
     }
     updatePackageUpgrades();
+    updateOsUpdate();
+    updateLvaUpdate();
   }, 3600 * 1000);
 
   return true;
@@ -179,6 +187,7 @@ const update = async () => {
   updateProcessorUsage();
   updateProcessorTemperature();
   updateBatteryLevel();
+  updateDisplayPower();
 };
 
 /**
@@ -1149,6 +1158,297 @@ const updatePackageUpgrades = async () => {
   };
   publishState("package_upgrades", packages.length);
   publishAttributes("package_upgrades", upgrades);
+};
+
+// =============================================================================
+// HBH Touch Panel fork: actionable OS + Voice Assistant update entities.
+//
+// The stock package_upgrades sensor above is read-only. These add two HA
+// `update` entities on the same TouchKio device — one applies apt upgrades, the
+// other updates linux-voice-assistant — so updates are click-to-install from HA
+// without a separate updater device. They mirror initApp()/updateApp() exactly.
+// =============================================================================
+
+/**
+ * Initializes the OS packages update entity and handles the install logic.
+ */
+const initOsUpdate = () => {
+  const root = `${INTEGRATION.root}/os_update`;
+  const config = {
+    name: "OS Packages",
+    unique_id: `${INTEGRATION.node}_os_update`,
+    command_topic: `${root}/install`,
+    state_topic: `${root}/version/state`,
+    payload_install: "install",
+    icon: "mdi:debian",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.sudoRights || ARGS.app_disable.includes("mqtt_os_update")) {
+    removeConfig("update", config);
+    return;
+  }
+  publishConfig("update", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        console.info("Update OS packages...");
+        hardware.installPackageUpgrades((progress, error) => {
+          updateOsUpdate(progress || 0);
+        });
+      }
+    })
+    .subscribe(config.command_topic);
+  updateOsUpdate();
+};
+
+/**
+ * Updates the OS packages update entity via the mqtt connection.
+ */
+const updateOsUpdate = async (progress = 0) => {
+  if (!HARDWARE.support.sudoRights || ARGS.app_disable.includes("mqtt_os_update")) {
+    return;
+  }
+  const packages = hardware.checkPackageUpgrades();
+  const count = packages.length;
+  const names = packages
+    .map((pkg) => pkg.replace(/\s*\[.*?\]\s*/g, "").split(/\s+/)[0])
+    .filter(Boolean);
+  const summary = count ? names.slice(0, 30).join(", ") : "System is up to date.";
+  const version = {
+    title: "OS Packages",
+    installed_version: "up to date",
+    latest_version: count ? `${count} update${count === 1 ? "" : "s"}` : "up to date",
+    release_summary: summary.length > 250 ? summary.slice(0, 250) + "..." : summary,
+    update_percentage: progress || null,
+    in_progress: progress > 0 && progress < 100,
+  };
+  publishState("os_update/version", JSON.stringify(version));
+};
+
+/**
+ * Initializes the Voice Assistant update entity and handles the install logic.
+ */
+const initLvaUpdate = () => {
+  const root = `${INTEGRATION.root}/lva_update`;
+  const config = {
+    name: "Voice Assistant",
+    unique_id: `${INTEGRATION.node}_lva_update`,
+    command_topic: `${root}/install`,
+    state_topic: `${root}/version/state`,
+    payload_install: "install",
+    icon: "mdi:microphone-message",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.lvaUpdate || ARGS.app_disable.includes("mqtt_lva_update")) {
+    removeConfig("update", config);
+    return;
+  }
+  publishConfig("update", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        console.info("Update Voice Assistant...");
+        hardware.installLvaUpdate((progress, error) => {
+          updateLvaUpdate(progress || 0);
+        });
+      }
+    })
+    .subscribe(config.command_topic);
+  updateLvaUpdate();
+};
+
+/**
+ * Updates the Voice Assistant update entity via the mqtt connection.
+ */
+const updateLvaUpdate = async (progress = 0) => {
+  if (!HARDWARE.support.lvaUpdate || ARGS.app_disable.includes("mqtt_lva_update")) {
+    return;
+  }
+  const info = hardware.checkLvaUpdate();
+  if (!info) {
+    return;
+  }
+  const version = {
+    title: "Linux Voice Assistant",
+    installed_version: info.installed || "unknown",
+    latest_version: info.latest || info.installed || "unknown",
+    release_summary: `Tracking '${info.ref}'. Installed ${info.installed} → latest ${info.latest}.`,
+    release_url: "https://github.com/OHF-Voice/linux-voice-assistant",
+    update_percentage: progress || null,
+    in_progress: progress > 0 && progress < 100,
+  };
+  publishState("lva_update/version", JSON.stringify(version));
+};
+
+// =============================================================================
+// HBH fork: remote audio-device selection (LVA mic/speaker) + display power /
+// rotation. Backed by helpers in hardware.js.
+// =============================================================================
+
+/**
+ * Initializes the LVA microphone (input device) select.
+ */
+const initAudioInput = () => {
+  const root = `${INTEGRATION.root}/audio_input`;
+  const options = hardware.getAudioInputDevices();
+  const config = {
+    name: "Microphone",
+    unique_id: `${INTEGRATION.node}_audio_input`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    options: options,
+    icon: "mdi:microphone",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.audioSelect || !options.length || ARGS.app_disable.includes("mqtt_audio_input")) {
+    removeConfig("select", config);
+    return;
+  }
+  publishConfig("select", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const device = message.toString();
+        console.info("Set LVA Microphone:", device);
+        hardware.setSelectedAudioInput(device, () => updateAudioInput());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateAudioInput();
+};
+
+/**
+ * Updates the microphone select state via the mqtt connection.
+ */
+const updateAudioInput = async () => {
+  if (!HARDWARE.support.audioSelect || ARGS.app_disable.includes("mqtt_audio_input")) {
+    return;
+  }
+  const selected = hardware.getSelectedAudioInput() || (hardware.getAudioInputDevices()[0] || "");
+  publishState("audio_input", selected);
+};
+
+/**
+ * Initializes the LVA speaker (output device) select.
+ */
+const initAudioOutput = () => {
+  const root = `${INTEGRATION.root}/audio_output`;
+  const options = hardware.getAudioOutputDevices();
+  const config = {
+    name: "Speaker",
+    unique_id: `${INTEGRATION.node}_audio_output`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    options: options,
+    icon: "mdi:volume-high",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.audioSelect || !options.length || ARGS.app_disable.includes("mqtt_audio_output")) {
+    removeConfig("select", config);
+    return;
+  }
+  publishConfig("select", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const device = message.toString();
+        console.info("Set LVA Speaker:", device);
+        hardware.setSelectedAudioOutput(device, () => updateAudioOutput());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateAudioOutput();
+};
+
+/**
+ * Updates the speaker select state via the mqtt connection.
+ */
+const updateAudioOutput = async () => {
+  if (!HARDWARE.support.audioSelect || ARGS.app_disable.includes("mqtt_audio_output")) {
+    return;
+  }
+  const selected = hardware.getSelectedAudioOutput() || (hardware.getAudioOutputDevices()[0] || "");
+  publishState("audio_output", selected);
+};
+
+/**
+ * Initializes the display power switch.
+ */
+const initDisplayPower = () => {
+  const root = `${INTEGRATION.root}/display_power`;
+  const config = {
+    name: "Display Power",
+    unique_id: `${INTEGRATION.node}_display_power`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    payload_on: "ON",
+    payload_off: "OFF",
+    icon: "mdi:monitor",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.displayControl || ARGS.app_disable.includes("mqtt_display_power")) {
+    removeConfig("switch", config);
+    return;
+  }
+  publishConfig("switch", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const state = message.toString();
+        console.info("Set Display Power:", state);
+        hardware.setDisplayPower(state, () => updateDisplayPower());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateDisplayPower();
+};
+
+/**
+ * Updates the display power switch state via the mqtt connection.
+ */
+const updateDisplayPower = async () => {
+  if (!HARDWARE.support.displayControl || ARGS.app_disable.includes("mqtt_display_power")) {
+    return;
+  }
+  const power = hardware.getDisplayPower();
+  if (power) {
+    publishState("display_power", power);
+  }
+};
+
+/**
+ * Initializes the display rotation select.
+ */
+const initDisplayRotation = () => {
+  const root = `${INTEGRATION.root}/display_rotation`;
+  const config = {
+    name: "Display Rotation",
+    unique_id: `${INTEGRATION.node}_display_rotation`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    options: hardware.DISPLAY_ROTATIONS,
+    icon: "mdi:screen-rotation",
+    device: INTEGRATION.device,
+  };
+  if (!HARDWARE.support.displayControl || ARGS.app_disable.includes("mqtt_display_rotation")) {
+    removeConfig("select", config);
+    return;
+  }
+  publishConfig("select", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const value = message.toString();
+        console.info("Set Display Rotation:", value);
+        hardware.setDisplayRotation(value, () => updateDisplayRotation());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateDisplayRotation();
+};
+
+/**
+ * Updates the display rotation select state via the mqtt connection.
+ */
+const updateDisplayRotation = async () => {
+  if (!HARDWARE.support.displayControl || ARGS.app_disable.includes("mqtt_display_rotation")) {
+    return;
+  }
+  publishState("display_rotation", hardware.getDisplayRotation());
 };
 
 /**

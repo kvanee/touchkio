@@ -306,6 +306,13 @@ const checkSupport = () => {
     audioVolume: audioDevice,
     sudoRights: sudo,
     appUpdate: service && sudo && release,
+    // HBH fork: linux-voice-assistant update entity is available when its git
+    // checkout exists (restart is via `systemctl --user`, so no sudo needed).
+    lvaUpdate: commandExists("git") && dirExists(process.env.LVA_DIR || "/opt/lva"),
+    // HBH fork: LVA audio-device selection (needs the LVA checkout to enumerate).
+    audioSelect: dirExists(process.env.LVA_DIR || "/opt/lva"),
+    // HBH fork: display power/rotation via wlr-randr (wlroots/labwc session).
+    displayControl: commandExists("wlr-randr"),
   };
 };
 
@@ -859,6 +866,263 @@ const checkPackageUpgrades = () => {
   return packages;
 };
 
+// =============================================================================
+// HBH Touch Panel fork: actionable system updates (OS packages + Voice Assistant)
+//
+// These back the two extra Home Assistant `update` entities added in
+// integration.js so a panel exposes OS-package and linux-voice-assistant updates
+// on the *same* TouchKio device (no separate updater agent / second device).
+// =============================================================================
+
+// linux-voice-assistant checkout managed by the panel installer. Overridable via
+// the TouchKio service environment; defaults match provisioning/.../install.sh.
+const HBH_LVA_DIR = process.env.LVA_DIR || "/opt/lva";
+const HBH_LVA_REF = process.env.LVA_GIT_REF || "main";
+const HBH_LVA_SERVICE = process.env.LVA_SERVICE || "lva.service";
+
+/**
+ * Checks whether a filesystem path is an existing directory.
+ *
+ * @param {string} p - The path to test.
+ * @returns {bool} Returns true if the path is a directory.
+ */
+const dirExists = (p) => {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {}
+  return false;
+};
+
+/**
+ * Applies all available apt package upgrades.
+ *
+ * Runs `apt-get update` then `apt-get -y upgrade` non-interactively. Progress is
+ * coarse (apt emits no reliable percentage), so the update entity flips from
+ * in-progress to done. The output is provided through the callback function.
+ *
+ * @param {Function} callback - A callback function that receives progress or error.
+ * @returns {Object} The spawned process object.
+ */
+const installPackageUpgrades = (callback = null) => {
+  if (!HARDWARE.support.sudoRights) {
+    if (typeof callback === "function") callback(null, "Not supported");
+    return;
+  }
+  const args = [
+    "-c",
+    "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && " +
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y upgrade",
+  ];
+  return execScriptCommand("bash", args, callback);
+};
+
+/**
+ * Checks for a linux-voice-assistant update on the tracked git ref.
+ *
+ * Performs a lightweight `git fetch` (no working-tree change) and compares the
+ * installed commit against the remote tip. Used by the LVA update entity.
+ *
+ * @returns {Object|null} { installed, latest, ref } short hashes, or null if unsupported.
+ */
+const checkLvaUpdate = () => {
+  if (!commandExists("git") || !dirExists(HBH_LVA_DIR)) {
+    return null;
+  }
+  const installed = execSyncCommand("git", ["-C", HBH_LVA_DIR, "rev-parse", "--short", "HEAD"]);
+  execSyncCommand("git", ["-C", HBH_LVA_DIR, "fetch", "--quiet", "origin", HBH_LVA_REF]);
+  const latest = execSyncCommand("git", ["-C", HBH_LVA_DIR, "rev-parse", "--short", "FETCH_HEAD"]);
+  return { installed, latest, ref: HBH_LVA_REF };
+};
+
+/**
+ * Installs the latest linux-voice-assistant on the tracked ref and restarts it.
+ *
+ * Fetches and checks out the remote tip (works for branches and tags), re-runs
+ * the project's setup (venv/deps), and restarts the LVA service. The output is
+ * provided through the callback function.
+ *
+ * @param {Function} callback - A callback function that receives progress or error.
+ * @returns {Object} The spawned process object.
+ */
+const installLvaUpdate = (callback = null) => {
+  if (!commandExists("git") || !dirExists(HBH_LVA_DIR)) {
+    if (typeof callback === "function") callback(null, "Not supported");
+    return;
+  }
+  // LVA runs as a *user* service in the same session as TouchKio, so the restart
+  // uses `systemctl --user` (no sudo) and the checkout is owned by this user.
+  const cmd =
+    `git -C ${HBH_LVA_DIR} fetch --quiet origin ${HBH_LVA_REF} && ` +
+    `git -C ${HBH_LVA_DIR} checkout -q --force FETCH_HEAD && ` +
+    `${HBH_LVA_DIR}/script/setup && ` +
+    `systemctl --user restart ${HBH_LVA_SERVICE}`;
+  return execScriptCommand("bash", ["-c", cmd], callback);
+};
+
+// =============================================================================
+// HBH fork: remote LVA audio-device selection + display power / rotation.
+// These back HA select/switch entities (integration.js). They shell out to the
+// same user-session tools TouchKio already uses (so they run in the panel
+// user's Wayland/PipeWire session), and persist choices under ~/.config/hbh so
+// they survive restarts (lva-run.sh and the labwc autostart read them).
+// =============================================================================
+
+const HBH_CONF_DIR = path.join(os.homedir(), ".config", "hbh");
+const HBH_AUDIO_IN_FILE = path.join(HBH_CONF_DIR, "lva-input");
+const HBH_AUDIO_OUT_FILE = path.join(HBH_CONF_DIR, "lva-output");
+const HBH_ROTATION_FILE = path.join(HBH_CONF_DIR, "rotation");
+const DISPLAY_ROTATIONS = ["normal", "90", "180", "270"];
+
+const ensureHbhDir = () => {
+  try {
+    fs.mkdirSync(HBH_CONF_DIR, { recursive: true });
+  } catch {}
+};
+
+const readValueFile = (p) => {
+  try {
+    return fs.readFileSync(p, "utf8").trim();
+  } catch {}
+  return "";
+};
+
+/**
+ * Lists LVA audio devices using LVA's own --list-*-devices (so the values are
+ * exactly what --audio-input-device / --audio-output-device accept).
+ * Input prints "[idx] name"; output prints "name: description".
+ *
+ * @param {string} kind - "input" or "output".
+ * @returns {Array<string>} Device names/ids selectable in LVA.
+ */
+const lvaListDevices = (kind) => {
+  if (!dirExists(HBH_LVA_DIR)) {
+    return [];
+  }
+  const py = path.join(HBH_LVA_DIR, ".venv", "bin", "python");
+  const flag = kind === "input" ? "--list-input-devices" : "--list-output-devices";
+  let out = null;
+  try {
+    // Run from the checkout so `-m linux_voice_assistant` resolves whether or
+    // not the package was pip-installed into the venv.
+    out = cpr.execSync(`"${py}" -m linux_voice_assistant ${flag}`, { encoding: "utf8", cwd: HBH_LVA_DIR });
+  } catch (error) {
+    console.warn("LVA device list failed:", error.message);
+  }
+  if (!out) {
+    return [];
+  }
+  const names = [];
+  for (const line of out.split("\n")) {
+    if (kind === "input") {
+      const m = line.match(/^\s*\[\d+\]\s+(.+?)\s*$/);
+      if (m) names.push(m[1]);
+    } else {
+      if (/^\s*Audio output devices/i.test(line)) continue;
+      // Split on the first ": " (colon-space); the device id may itself contain
+      // colons (e.g. "alsa/plughw:CARD=Headphones,DEV=0: <description>").
+      const m = line.match(/^\s*(.+?):\s+.+$/);
+      if (m) names.push(m[1].trim());
+    }
+  }
+  return names;
+};
+
+const getAudioInputDevices = () => lvaListDevices("input");
+const getAudioOutputDevices = () => lvaListDevices("output");
+const getSelectedAudioInput = () => readValueFile(HBH_AUDIO_IN_FILE);
+const getSelectedAudioOutput = () => readValueFile(HBH_AUDIO_OUT_FILE);
+
+/**
+ * Persists the chosen LVA input device and restarts LVA to apply it.
+ */
+const setSelectedAudioInput = (name, callback = null) => {
+  ensureHbhDir();
+  try {
+    fs.writeFileSync(HBH_AUDIO_IN_FILE, `${name}\n`);
+  } catch {}
+  execAsyncCommand("systemctl", ["--user", "restart", HBH_LVA_SERVICE], callback);
+};
+
+/**
+ * Persists the chosen LVA output device and restarts LVA to apply it.
+ */
+const setSelectedAudioOutput = (name, callback = null) => {
+  ensureHbhDir();
+  try {
+    fs.writeFileSync(HBH_AUDIO_OUT_FILE, `${name}\n`);
+  } catch {}
+  execAsyncCommand("systemctl", ["--user", "restart", HBH_LVA_SERVICE], callback);
+};
+
+/**
+ * Returns the wlroots output name of the (single) panel display.
+ */
+const displayOutputName = () => {
+  const out = execSyncCommand("wlr-randr", []);
+  if (!out) {
+    return null;
+  }
+  return (out.split("\n")[0] || "").split(/\s+/)[0] || null;
+};
+
+/**
+ * Returns "ON"/"OFF" for the display based on wlr-randr's Enabled state.
+ */
+const getDisplayPower = () => {
+  const out = execSyncCommand("wlr-randr", []);
+  if (!out) {
+    return null;
+  }
+  const m = out.match(/Enabled:\s*(yes|no)/i);
+  if (!m) {
+    return null;
+  }
+  return m[1].toLowerCase() === "yes" ? "ON" : "OFF";
+};
+
+/**
+ * Powers the display on/off via `wlr-randr --output <out> --on|--off`.
+ */
+const setDisplayPower = (state, callback = null) => {
+  const out = displayOutputName();
+  if (!out) {
+    if (typeof callback === "function") callback(null, "No output");
+    return;
+  }
+  const flag = `${state}`.toUpperCase() === "ON" ? "--on" : "--off";
+  execAsyncCommand("wlr-randr", ["--output", out, flag], callback);
+};
+
+/**
+ * Current display rotation: persisted value, else live transform, else normal.
+ */
+const getDisplayRotation = () => {
+  const saved = readValueFile(HBH_ROTATION_FILE);
+  if (saved) {
+    return saved;
+  }
+  const out = execSyncCommand("wlr-randr", []);
+  const m = out && out.match(/Transform:\s*(\S+)/i);
+  return m ? m[1] : "normal";
+};
+
+/**
+ * Rotates the display via `wlr-randr --transform` and persists the choice so
+ * the labwc autostart re-applies it after a reboot.
+ */
+const setDisplayRotation = (value, callback = null) => {
+  const out = displayOutputName();
+  if (!out || !DISPLAY_ROTATIONS.includes(`${value}`)) {
+    if (typeof callback === "function") callback(null, "Invalid");
+    return;
+  }
+  ensureHbhDir();
+  try {
+    fs.writeFileSync(HBH_ROTATION_FILE, `${value}\n`);
+  } catch {}
+  execAsyncCommand("wlr-randr", ["--output", out, "--transform", `${value}`], callback);
+};
+
 /**
  * Shuts down the system using `sudo shutdown -h now`.
  *
@@ -1213,6 +1477,20 @@ module.exports = {
   getKeyboardVisibility,
   setKeyboardVisibility,
   checkPackageUpgrades,
+  installPackageUpgrades,
+  checkLvaUpdate,
+  installLvaUpdate,
+  getAudioInputDevices,
+  getAudioOutputDevices,
+  getSelectedAudioInput,
+  getSelectedAudioOutput,
+  setSelectedAudioInput,
+  setSelectedAudioOutput,
+  getDisplayPower,
+  setDisplayPower,
+  getDisplayRotation,
+  setDisplayRotation,
+  DISPLAY_ROTATIONS,
   shutdownSystem,
   rebootSystem,
   execSyncCommand,

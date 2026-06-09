@@ -29,7 +29,7 @@ echo -e "\nDownloading the latest release..."
 TMP_DIR=$(mktemp -d)
 chmod 755 "$TMP_DIR"
 
-JSON=$(wget -qO- "https://api.github.com/repos/leukipp/touchkio/releases" | tr -d '\r\n')
+JSON=$(wget -qO- "https://api.github.com/repos/kvanee/touchkio/releases" | tr -d '\r\n')
 if $ARG_EARLY; then
   DEB_REG='"prerelease":\s*(true|false).*?"browser_download_url":\s*"\K[^\"]*_'$ARCH'\.deb'
 else
@@ -46,7 +46,9 @@ wget --show-progress -q -O "$DEB_PATH" "$DEB_URL" || { echo "Failed to download 
 echo -e "\nInstalling the latest release..."
 
 command -v apt &> /dev/null || { echo "Package manager apt was not found."; exit 1; }
-sudo apt install -y "$DEB_PATH" || { echo "Installation of .deb file failed."; exit 1; }
+# dpkg -i (re)installs even when the version is unchanged (apt skips same-version
+# local .deb); apt -f resolves any dependencies.
+sudo dpkg -i "$DEB_PATH" || sudo apt-get install -f -y || { echo "Installation of .deb file failed."; exit 1; }
 
 # Create the systemd user service
 echo -e "\nCreating systemd user service..."
