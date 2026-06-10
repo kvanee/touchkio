@@ -14,7 +14,7 @@ Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 
 | Entity | Install action | Support condition |
 | --- | --- | --- |
-| **OS Packages** (`<node>_os_update`) | `apt-get update && apt-get -y upgrade` | password‑less sudo |
+| **OS Packages** (`<node>_os_update`) | `apt-get update && apt-get -y --with-new-pkgs upgrade`; auto‑reboots 10s after a successful install **if** a kernel/firmware change requires it | password‑less sudo |
 | **Voice Assistant** (`<node>_lva_update`) | `git` fetch/checkout the tracked ref of `/opt/lva` → re‑run `script/setup` → `systemctl --user restart lva.service` | `git` + `/opt/lva` present |
 
 ### LVA audio device selection (`select`)
