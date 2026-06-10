@@ -896,9 +896,11 @@ const dirExists = (p) => {
 /**
  * Applies all available apt package upgrades.
  *
- * Runs `apt-get update` then `apt-get -y upgrade` non-interactively. Progress is
- * coarse (apt emits no reliable percentage), so the update entity flips from
- * in-progress to done. The output is provided through the callback function.
+ * Runs `apt-get update` then `apt-get -y --with-new-pkgs upgrade` non-interactively.
+ * --with-new-pkgs matches `apt list --upgradable` semantics: kernel ABI bumps pull in
+ * NEW linux-image-* packages, which plain `apt-get upgrade` holds back forever.
+ * Progress is coarse (apt emits no reliable percentage), so the update entity flips
+ * from in-progress to done. The output is provided through the callback function.
  *
  * @param {Function} callback - A callback function that receives progress or error.
  * @returns {Object} The spawned process object.
@@ -911,7 +913,7 @@ const installPackageUpgrades = (callback = null) => {
   const args = [
     "-c",
     "sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && " +
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y upgrade",
+      "sudo DEBIAN_FRONTEND=noninteractive apt-get -y --with-new-pkgs upgrade",
   ];
   return execScriptCommand("bash", args, callback);
 };
