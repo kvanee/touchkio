@@ -1193,6 +1193,13 @@ const initOsUpdate = () => {
         console.info("Update OS packages...");
         hardware.installPackageUpgrades((progress, error) => {
           updateOsUpdate(progress || 0);
+          // Kernel/firmware upgrades only take effect after a reboot. Reboot
+          // automatically once the install succeeds and one is required; the
+          // delay lets the final mqtt state publish first.
+          if (!error && progress === 100 && hardware.checkRebootRequired()) {
+            console.info("Reboot required to finish OS update, rebooting in 10s...");
+            setTimeout(() => hardware.rebootSystem(), 10000);
+          }
         });
       }
     })

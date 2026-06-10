@@ -919,6 +919,25 @@ const installPackageUpgrades = (callback = null) => {
 };
 
 /**
+ * Checks whether the system needs a reboot to finish applying updates.
+ *
+ * True if /run/reboot-required exists (Debian convention) or if the newest
+ * installed kernel for the running flavor (e.g. +rpt-rpi-2712) is newer than
+ * the running one — Pi OS Lite lacks the hook that writes reboot-required,
+ * so kernel upgrades are detected by comparing /lib/modules against uname -r.
+ *
+ * @returns {bool} Returns true if a reboot is required.
+ */
+const checkRebootRequired = () => {
+  const script =
+    'CUR="$(uname -r)"; SUF="${CUR#*+}"; ' +
+    'LATEST="$(ls -1 /lib/modules 2>/dev/null | grep -F "+${SUF}" | sort -V | tail -n 1)"; ' +
+    'if [ -f /run/reboot-required ] || { [ -n "$LATEST" ] && [ "$LATEST" != "$CUR" ]; }; then echo yes; else echo no; fi';
+  const output = execSyncCommand("bash", ["-c", script]);
+  return (output || "").trim() === "yes";
+};
+
+/**
  * Checks for a linux-voice-assistant update on the tracked git ref.
  *
  * Performs a lightweight `git fetch` (no working-tree change) and compares the
@@ -1480,6 +1499,7 @@ module.exports = {
   setKeyboardVisibility,
   checkPackageUpgrades,
   installPackageUpgrades,
+  checkRebootRequired,
   checkLvaUpdate,
   installLvaUpdate,
   getAudioInputDevices,
