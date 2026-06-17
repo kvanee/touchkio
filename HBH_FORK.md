@@ -3,7 +3,8 @@
 This is a fork of [leukipp/touchkio](https://github.com/leukipp/touchkio) for the
 HBH Touch Panel. It adds HA entities (all on the *same* TouchKio MQTT device, so
 there's no separate updater/control device) for: **system updates**, **LVA
-mic/speaker selection**, and **display power + rotation**.
+mic/speaker selection**, **display power + rotation**, and an **assist debug
+card** toggle.
 
 Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 **Package Upgrades** sensor.
@@ -33,6 +34,12 @@ Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 | --- | --- | --- |
 | **Display Power** (`<node>_display_power`, `switch`) | `wlr-randr --output <out> --on/--off` | `wlr-randr` present |
 | **Display Rotation** (`<node>_display_rotation`, `select`: normal/90/180/270) | `wlr-randr --transform`; persists `~/.config/hbh/rotation` so the labwc autostart re-applies it after reboot | `wlr-randr` present |
+
+### Assist debug card (`switch`)
+
+| Entity | Behavior | Support |
+| --- | --- | --- |
+| **Assist Debug Card** (`<node>_assist_debug_card`, `switch`, `entity_category: config`) | soft on/off (no hardware); persists `~/.config/hbh/assist-debug-card`. Read by the `assist-satellite-card` (`show_card_entity`) to show/hide its on-screen debug controls — the waveform overlay always runs regardless | always (disable via `--app-disable mqtt_assist_debug_card`) |
 
 > TouchKio and LVA both run as **user** services in the same session, so audio/
 > display commands and the LVA restart use the session tools + `systemctl --user`
