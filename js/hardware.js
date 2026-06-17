@@ -992,6 +992,7 @@ const HBH_CONF_DIR = path.join(os.homedir(), ".config", "hbh");
 const HBH_AUDIO_IN_FILE = path.join(HBH_CONF_DIR, "lva-input");
 const HBH_AUDIO_OUT_FILE = path.join(HBH_CONF_DIR, "lva-output");
 const HBH_ROTATION_FILE = path.join(HBH_CONF_DIR, "rotation");
+const HBH_ASSIST_DEBUG_FILE = path.join(HBH_CONF_DIR, "assist-debug-card");
 const DISPLAY_ROTATIONS = ["normal", "90", "180", "270"];
 
 const ensureHbhDir = () => {
@@ -1142,6 +1143,22 @@ const setDisplayRotation = (value, callback = null) => {
     fs.writeFileSync(HBH_ROTATION_FILE, `${value}\n`);
   } catch {}
   execAsyncCommand("wlr-randr", ["--output", out, "--transform", `${value}`], callback);
+};
+
+/**
+ * Assist debug card visibility — a soft on/off setting (no hardware) read by the
+ * assist-satellite Lovelace card to show/hide its on-screen debug controls.
+ * Persisted under ~/.config/hbh so the toggle survives restarts.
+ */
+const getAssistDebugCard = () => (readValueFile(HBH_ASSIST_DEBUG_FILE) === "on" ? "on" : "off");
+
+const setAssistDebugCard = (value, callback = null) => {
+  const state = `${value}`.toLowerCase() === "on" ? "on" : "off";
+  ensureHbhDir();
+  try {
+    fs.writeFileSync(HBH_ASSIST_DEBUG_FILE, `${state}\n`);
+  } catch {}
+  if (typeof callback === "function") callback(null, state);
 };
 
 /**
@@ -1513,6 +1530,8 @@ module.exports = {
   getDisplayRotation,
   setDisplayRotation,
   DISPLAY_ROTATIONS,
+  getAssistDebugCard,
+  setAssistDebugCard,
   shutdownSystem,
   rebootSystem,
   execSyncCommand,

@@ -96,6 +96,7 @@ const init = async () => {
       initAudioOutput();
       initDisplayPower();
       initDisplayRotation();
+      initAssistDebugCard();
       initLastActive();
 
       // Init client diagnostic
@@ -1456,6 +1457,49 @@ const updateDisplayRotation = async () => {
     return;
   }
   publishState("display_rotation", hardware.getDisplayRotation());
+};
+
+/**
+ * Initializes the assist debug card switch. A soft on/off setting (no hardware)
+ * read by the assist-satellite Lovelace card to show/hide its debug controls.
+ */
+const initAssistDebugCard = () => {
+  const root = `${INTEGRATION.root}/assist_debug_card`;
+  const config = {
+    name: "Assist Debug Card",
+    unique_id: `${INTEGRATION.node}_assist_debug_card`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    payload_on: "on",
+    payload_off: "off",
+    entity_category: "config",
+    icon: "mdi:bug-outline",
+    device: INTEGRATION.device,
+  };
+  if (ARGS.app_disable.includes("mqtt_assist_debug_card")) {
+    removeConfig("switch", config);
+    return;
+  }
+  publishConfig("switch", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const state = message.toString();
+        console.info("Set Assist Debug Card:", state);
+        hardware.setAssistDebugCard(state, () => updateAssistDebugCard());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateAssistDebugCard();
+};
+
+/**
+ * Updates the assist debug card switch state via the mqtt connection.
+ */
+const updateAssistDebugCard = async () => {
+  if (ARGS.app_disable.includes("mqtt_assist_debug_card")) {
+    return;
+  }
+  publishState("assist_debug_card", hardware.getAssistDebugCard());
 };
 
 /**
