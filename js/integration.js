@@ -97,6 +97,7 @@ const init = async () => {
       initDisplayPower();
       initDisplayRotation();
       initAssistDebugCard();
+      initAccentColor();
       initLastActive();
 
       // Init client diagnostic
@@ -1500,6 +1501,52 @@ const updateAssistDebugCard = async () => {
     return;
   }
   publishState("assist_debug_card", hardware.getAssistDebugCard());
+};
+
+/**
+ * Initializes the accent color text. A soft setting (no hardware): the
+ * Midnight Luxe header card reads this entity (`accent_entity` config) and
+ * re-themes the dashboard's champagne highlight from it. #RRGGBB only.
+ */
+const initAccentColor = () => {
+  const root = `${INTEGRATION.root}/accent_color`;
+  const config = {
+    name: "Accent Color",
+    unique_id: `${INTEGRATION.node}_accent_color`,
+    command_topic: `${root}/set`,
+    state_topic: `${root}/state`,
+    value_template: "{{ value }}",
+    pattern: "^#[0-9a-fA-F]{6}$",
+    min: 7,
+    max: 7,
+    entity_category: "config",
+    icon: "mdi:palette",
+    device: INTEGRATION.device,
+  };
+  if (ARGS.app_disable.includes("mqtt_accent_color")) {
+    removeConfig("text", config);
+    return;
+  }
+  publishConfig("text", config)
+    .on("message", (topic, message) => {
+      if (topic === config.command_topic) {
+        const color = message.toString();
+        console.info("Set Accent Color:", color);
+        hardware.setAccentColor(color, () => updateAccentColor());
+      }
+    })
+    .subscribe(config.command_topic);
+  updateAccentColor();
+};
+
+/**
+ * Updates the accent color text state via the mqtt connection.
+ */
+const updateAccentColor = async () => {
+  if (ARGS.app_disable.includes("mqtt_accent_color")) {
+    return;
+  }
+  publishState("accent_color", hardware.getAccentColor());
 };
 
 /**

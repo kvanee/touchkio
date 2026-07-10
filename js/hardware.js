@@ -993,6 +993,7 @@ const HBH_AUDIO_IN_FILE = path.join(HBH_CONF_DIR, "lva-input");
 const HBH_AUDIO_OUT_FILE = path.join(HBH_CONF_DIR, "lva-output");
 const HBH_ROTATION_FILE = path.join(HBH_CONF_DIR, "rotation");
 const HBH_ASSIST_DEBUG_FILE = path.join(HBH_CONF_DIR, "assist-debug-card");
+const HBH_ACCENT_FILE = path.join(HBH_CONF_DIR, "accent-color");
 const DISPLAY_ROTATIONS = ["normal", "90", "180", "270"];
 
 const ensureHbhDir = () => {
@@ -1159,6 +1160,29 @@ const setAssistDebugCard = (value, callback = null) => {
     fs.writeFileSync(HBH_ASSIST_DEBUG_FILE, `${state}\n`);
   } catch {}
   if (typeof callback === "function") callback(null, state);
+};
+
+/**
+ * Dashboard accent color — a soft setting (no hardware) read by the Midnight
+ * Luxe header card, which re-themes the dashboard's champagne highlight from
+ * it. Hex only (#RRGGBB); anything else falls back to the design default.
+ * Persisted under ~/.config/hbh so it survives restarts.
+ */
+const DEFAULT_ACCENT_COLOR = "#C9A84C";
+
+const getAccentColor = () => {
+  const saved = readValueFile(HBH_ACCENT_FILE);
+  return /^#[0-9a-fA-F]{6}$/.test(saved) ? saved.toUpperCase() : DEFAULT_ACCENT_COLOR;
+};
+
+const setAccentColor = (value, callback = null) => {
+  const raw = `${value}`.trim();
+  const color = /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toUpperCase() : DEFAULT_ACCENT_COLOR;
+  ensureHbhDir();
+  try {
+    fs.writeFileSync(HBH_ACCENT_FILE, `${color}\n`);
+  } catch {}
+  if (typeof callback === "function") callback(null, color);
 };
 
 /**
@@ -1532,6 +1556,8 @@ module.exports = {
   DISPLAY_ROTATIONS,
   getAssistDebugCard,
   setAssistDebugCard,
+  getAccentColor,
+  setAccentColor,
   shutdownSystem,
   rebootSystem,
   execSyncCommand,

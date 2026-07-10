@@ -41,6 +41,12 @@ Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 | --- | --- | --- |
 | **Assist Debug Card** (`<node>_assist_debug_card`, `switch`, `entity_category: config`) | soft on/off (no hardware); persists `~/.config/hbh/assist-debug-card`. Read by the `assist-satellite-card` (`show_card_entity`) to show/hide its on-screen debug controls — the waveform overlay always runs regardless | always (disable via `--app-disable mqtt_assist_debug_card`) |
 
+### Accent color (`text`)
+
+| Entity | Behavior | Support |
+| --- | --- | --- |
+| **Accent Color** (`<node>_accent_color`, `text`, `entity_category: config`) | `#RRGGBB` hex (pattern-validated); persists `~/.config/hbh/accent-color`. Read by the **Midnight Luxe header card** (`accent_entity` config) which re-themes the dashboard's champagne highlight (`--ml-champagne` / `-soft` / `-rgb` document-root overrides) — TouchKio just owns the setting, like the debug-card switch. Default `#C9A84C` (the design champagne) | always (disable via `--app-disable mqtt_accent_color`) |
+
 > TouchKio and LVA both run as **user** services in the same session, so audio/
 > display commands and the LVA restart use the session tools + `systemctl --user`
 > (no sudo), and `/opt/lva` is owned by the panel user — which is what lets
