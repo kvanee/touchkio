@@ -781,8 +781,9 @@ const getAudioVolume = () => {
   if (!HARDWARE.support.audioVolume) {
     return null;
   }
-  const mute = execSyncCommand("pactl", ["get-sink-mute", "@DEFAULT_SINK@"]);
-  const volume = execSyncCommand("pactl", ["get-sink-volume", "@DEFAULT_SINK@"]);
+  const primary = resolveVolumeSinks()[0]; // HBH: the room's real output
+  const mute = execSyncCommand("pactl", ["get-sink-mute", primary]);
+  const volume = execSyncCommand("pactl", ["get-sink-volume", primary]);
   if (!mute || !volume) {
     return null;
   }
@@ -811,8 +812,15 @@ const setAudioVolume = (volume, callback = null) => {
     if (typeof callback === "function") callback(null, "Invalid volume");
     return;
   }
-  execAsyncCommand("pactl", ["set-sink-mute", "@DEFAULT_SINK@", volume === 0 ? "1" : "0"]);
-  execAsyncCommand("pactl", ["set-sink-volume", "@DEFAULT_SINK@", `${volume}%`], callback);
+  // HBH: master volume — drive every configured output (music + voice sinks).
+  const sinks = resolveVolumeSinks();
+  for (const sink of sinks) {
+    execAsyncCommand("pactl", ["set-sink-mute", sink, volume === 0 ? "1" : "0"]);
+  }
+  sinks.forEach((sink, i) => {
+    execAsyncCommand("pactl", ["set-sink-volume", sink, `${volume}%`],
+      i === sinks.length - 1 ? callback : null);
+  });
 };
 
 /**
@@ -992,6 +1000,7 @@ const HBH_CONF_DIR = path.join(os.homedir(), ".config", "hbh");
 const HBH_AUDIO_IN_FILE = path.join(HBH_CONF_DIR, "lva-input");
 const HBH_AUDIO_OUT_FILE = path.join(HBH_CONF_DIR, "lva-output");
 const HBH_ROTATION_FILE = path.join(HBH_CONF_DIR, "rotation");
+const HBH_VOLUME_SINKS_FILE = path.join(HBH_CONF_DIR, "volume-sinks");
 const HBH_ASSIST_DEBUG_FILE = path.join(HBH_CONF_DIR, "assist-debug-card");
 const HBH_ACCENT_FILE = path.join(HBH_CONF_DIR, "accent-color");
 const DISPLAY_ROTATIONS = ["normal", "90", "180", "270"];
@@ -1007,6 +1016,34 @@ const readValueFile = (p) => {
     return fs.readFileSync(p, "utf8").trim();
   } catch {}
   return "";
+};
+
+/**
+ * HBH: resolves the sinks the HA Volume slider drives. The panels play music
+ * out the S/PDIF sink and voice out the XVF3800 speaker — the PipeWire
+ * default sink is often NEITHER, so upstream's @DEFAULT_SINK@ volume control
+ * moved a sink nobody hears. ~/.config/hbh/volume-sinks (seeded by
+ * provisioning) holds one case-insensitive substring per line, matched
+ * against `pactl list sinks short` names; the FIRST line is the primary
+ * (used for state reporting). Missing file or no matches -> upstream
+ * behavior (@DEFAULT_SINK@), so vanilla installs are unaffected.
+ *
+ * @returns {string[]} Resolved sink names (never empty).
+ */
+const resolveVolumeSinks = () => {
+  const hints = readValueFile(HBH_VOLUME_SINKS_FILE)
+    .split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!hints.length) return ["@DEFAULT_SINK@"];
+  const out = execSyncCommand("pactl", ["list", "sinks", "short"]);
+  if (!out) return ["@DEFAULT_SINK@"];
+  const names = out.split(/\r?\n/).map((l) => l.split(/\t/)[1]).filter(Boolean);
+  const sinks = [];
+  for (const h of hints) {
+    for (const n of names) {
+      if (n.toLowerCase().includes(h.toLowerCase()) && !sinks.includes(n)) sinks.push(n);
+    }
+  }
+  return sinks.length ? sinks : ["@DEFAULT_SINK@"];
 };
 
 /**

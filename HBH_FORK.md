@@ -54,6 +54,18 @@ Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 
 The stock **Package Upgrades** sensor is kept; **OS Packages** is the actionable version.
 
+### Master volume (upstream `number`, retargeted — v1.4.8)
+
+Upstream's Volume slider drives `@DEFAULT_SINK@` — on the HBH panels the
+PipeWire default sink is often NEITHER audible output (music exits the S/PDIF
+sink, voice the XVF3800 speaker), so the slider moved a sink nobody hears.
+`resolveVolumeSinks()` (hardware.js) reads `~/.config/hbh/volume-sinks`
+(seeded by provisioning: one case-insensitive substring per line, matched
+against `pactl list sinks short`) and the slider becomes a **master volume**:
+`setAudioVolume` drives every matched sink, `getAudioVolume` reports the FIRST
+(the room speaker). Missing file or no matches falls back to upstream
+`@DEFAULT_SINK@`, so vanilla installs are unaffected.
+
 ### Files changed
 
 - **`js/hardware.js`**
