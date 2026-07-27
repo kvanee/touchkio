@@ -1167,8 +1167,25 @@ const getDisplayRotation = () => {
 };
 
 /**
- * Rotates the display via `wlr-randr --transform` and persists the choice so
- * the labwc autostart re-applies it after a reboot.
+ * Re-applies the labwc touch->output mapping by reloading labwc (SIGHUP).
+ * wlroots rotates the VIDEO on a `wlr-randr --transform` but does NOT re-map
+ * the touchscreen, so after a rotation touch stays in the pre-rotation
+ * coordinate space ("uncalibrated"). rc.xml already maps the touch device to
+ * this output (`mapToOutput`, seeded by provisioning + resolved by the labwc
+ * autostart) — neither the output nor the device name changes on rotation, so
+ * a reconfigure is all that's needed: it re-computes the touch matrix against
+ * the NEW output transform. SIGHUP is the reconfigure that works from outside
+ * the session (`labwc --reconfigure` needs LABWC_PID from inside it) and
+ * doesn't blank the screen. No-op (harmless) if labwc isn't the compositor.
+ */
+const remapTouchToOutput = (callback = null) => {
+  execAsyncCommand("pkill", ["-HUP", "-x", "labwc"], callback);
+};
+
+/**
+ * Rotates the display via `wlr-randr --transform`, persists the choice so the
+ * labwc autostart re-applies it after a reboot, and re-maps the touchscreen to
+ * the rotated output so touch input follows the video (see remapTouchToOutput).
  */
 const setDisplayRotation = (value, callback = null) => {
   const out = displayOutputName();
@@ -1180,7 +1197,14 @@ const setDisplayRotation = (value, callback = null) => {
   try {
     fs.writeFileSync(HBH_ROTATION_FILE, `${value}\n`);
   } catch {}
-  execAsyncCommand("wlr-randr", ["--output", out, "--transform", `${value}`], callback);
+  execAsyncCommand("wlr-randr", ["--output", out, "--transform", `${value}`], (reply, error) => {
+    // Rotate first, THEN re-map touch — a plain labwc reload re-applies the
+    // existing mapToOutput against the transform wlr-randr just set. Report the
+    // rotation's own result to the caller regardless of the remap's exit.
+    remapTouchToOutput(() => {
+      if (typeof callback === "function") callback(reply, error);
+    });
+  });
 };
 
 /**

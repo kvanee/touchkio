@@ -33,7 +33,7 @@ Upstream TouchKio already shipped an **App** `update` entity and a read‑only
 | Entity | Behavior | Support |
 | --- | --- | --- |
 | **Display Power** (`<node>_display_power`, `switch`) | `wlr-randr --output <out> --on/--off` | `wlr-randr` present |
-| **Display Rotation** (`<node>_display_rotation`, `select`: normal/90/180/270) | `wlr-randr --transform`; persists `~/.config/hbh/rotation` so the labwc autostart re-applies it after reboot | `wlr-randr` present |
+| **Display Rotation** (`<node>_display_rotation`, `select`: normal/90/180/270) | `wlr-randr --transform`, then reloads labwc (`pkill -HUP labwc`) so the rc.xml `mapToOutput` re-maps the **touchscreen** to the rotated output (wlroots rotates video but not touch); persists `~/.config/hbh/rotation` so the labwc autostart re-applies it after reboot | `wlr-randr` present |
 
 ### Assist debug card (`switch`)
 
