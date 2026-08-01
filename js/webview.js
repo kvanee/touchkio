@@ -1101,6 +1101,9 @@ const viewEvents = async () => {
     // Webview fully loaded
     view.webContents.on("did-finish-load", () => {
       console.debug(`webview.js: viewEvents(${i},did-finish-load)`);
+      // HBH: if HA dropped us on its login page, re-inject the long-lived kiosk
+      // session (no-op unless ~/.config/hbh/ha-token exists and we're on /auth).
+      hardware.injectHaKioskSession(view, WEBVIEW.viewUrls[i]);
       if ("app_debug" in ARGS) {
         setTimeout(() => {
           view.webContents.openDevTools();

@@ -1208,6 +1208,56 @@ const setDisplayRotation = (value, callback = null) => {
 };
 
 /**
+ * Keep the kiosk logged in to Home Assistant. HA's frontend CLEARS its stored
+ * session and drops to the /auth/authorize login page whenever an access-token
+ * refresh fails — a single transient HA/network blip at refresh time is enough,
+ * and it never recovers on its own (the login page doesn't retry stored tokens;
+ * seen 2026-08 on kitchen-panel, stuck at login for ~2 days). If a long-lived
+ * kiosk token is present (~/.config/hbh/ha-token), inject it as the HA session
+ * with a far-future expiry — so the frontend NEVER needs to refresh, removing
+ * the failure mode entirely — and return to the dashboard.
+ *
+ * Called from webview.js on every did-finish-load. No-ops unless the page is the
+ * HA login page AND the token file exists, so it is inert on non-HBH installs
+ * and while already authenticated. Throttled per target so an invalid token can
+ * only retry ~once a minute instead of hot-looping.
+ *
+ * @param {object} view - the Electron WebContentsView showing the page.
+ * @param {string} targetUrl - the dashboard URL to return to after injecting.
+ */
+const HBH_HA_TOKEN_FILE = path.join(HBH_CONF_DIR, "ha-token");
+const hbhSessionInjectAt = {};
+const injectHaKioskSession = (view, targetUrl) => {
+  let url = "";
+  try {
+    url = view.webContents.getURL();
+  } catch {
+    return;
+  }
+  if (!/\/auth\/authorize/.test(url)) return; // only on the HA login page
+  const token = readValueFile(HBH_HA_TOKEN_FILE);
+  if (!token) return; // feature off unless a kiosk token is provisioned
+  const now = Date.now();
+  if (hbhSessionInjectAt[targetUrl] && now - hbhSessionInjectAt[targetUrl] < 60000) {
+    console.warn("hardware.js: HA session inject throttled (login again <60s — kiosk token may be invalid)");
+    return;
+  }
+  hbhSessionInjectAt[targetUrl] = now;
+  console.info("hardware.js: injecting long-lived HA kiosk session, returning to dashboard");
+  // Runs in the HA origin's context (the login page is same-origin as the
+  // dashboard), so localStorage is written for the right origin. `expires` is
+  // set ~10y out so the frontend uses the token directly and never refreshes.
+  const js =
+    "(function(tok,target){try{var o=location.origin,n=Date.now();" +
+    'localStorage.setItem("hassTokens",JSON.stringify({' +
+    'access_token:tok,token_type:"Bearer",expires_in:315360000,' +
+    'hassUrl:o,clientId:o+"/",expires:n+315360000000,refresh_token:""}));' +
+    "location.replace(target);}catch(e){}})(" +
+    JSON.stringify(token) + "," + JSON.stringify(targetUrl) + ");";
+  view.webContents.executeJavaScript(js).catch(() => {});
+};
+
+/**
  * Assist debug card visibility — a soft on/off setting (no hardware) read by the
  * assist-satellite Lovelace card to show/hide its on-screen debug controls.
  * Persisted under ~/.config/hbh so the toggle survives restarts.
@@ -1615,6 +1665,7 @@ module.exports = {
   getDisplayRotation,
   setDisplayRotation,
   DISPLAY_ROTATIONS,
+  injectHaKioskSession,
   getAssistDebugCard,
   setAssistDebugCard,
   getAccentColor,

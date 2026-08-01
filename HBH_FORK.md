@@ -74,6 +74,14 @@ against `pactl list sinks short`) and the slider becomes a **master volume**:
     `getSelectedAudioInput`/`Output`, `setSelectedAudioInput`/`Output` (persist + restart LVA).
   - Display: `getDisplayPower`/`setDisplayPower`, `getDisplayRotation`/`setDisplayRotation`
     (via `wlr-randr`), `displayOutputName`, `DISPLAY_ROTATIONS`.
+  - **Kiosk auto-login: `injectHaKioskSession(view, targetUrl)`** — called from
+    `webview.js` on every `did-finish-load`. If the page is HA's `/auth/authorize`
+    login screen AND `~/.config/hbh/ha-token` holds a long-lived HA token, it writes
+    that token into `localStorage.hassTokens` with a ~10y expiry and returns to the
+    dashboard. HA's frontend clears its session and strands the panel at the login
+    page whenever a token refresh fails (a transient blip is enough); a long-lived
+    token means the frontend never refreshes, so that can't recur. No token file ⇒
+    inert (upstream behavior). Throttled per target against a bad-token hot-loop.
   - `dirExists`/`ensureHbhDir`/`readValueFile` helpers; `checkSupport()` gains `lvaUpdate`,
     `audioSelect`, `displayControl` flags. New functions in `module.exports`.
 - **`js/integration.js`**
